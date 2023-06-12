@@ -2,7 +2,7 @@
 # PALMID BASE CONTAINER ===================================
 #==========================================================
 # Docker Base: amazon linux2
-FROM amazonlinux:2023 AS serratus-base
+FROM amazonlinux:2023 AS palmid_builder
 
 ## Build/test container for palmid
 # sudo yum install -y docker git
@@ -70,38 +70,27 @@ LABEL tags="palmscan, diamond, muscle, R, palmid"
 # Dependencies ============================================
 #==========================================================
 # Update Core
-# RUN yum -y update
+# RUN yum -y update # BASE
 RUN yum -y install tar wget gzip which sudo shadow-utils \
            util-linux byacc git
 
-# For development
+# For development # BASE
 RUN yum -y install vim htop less
 
-# htslib/samtools
+# htslib/samtools # BASE + FINAL
 RUN yum -y install gcc make \
     unzip bzip2 bzip2-devel xz-devel zlib-devel \
     curl-devel openssl-devel \
     ncurses-devel
 
-# Python3
-RUN yum -y install python3 python3-devel &&\
-  alias python=python3 &&\
-  curl -O https://bootstrap.pypa.io/get-pip.py &&\
-  python3 get-pip.py &&\
-  rm get-pip.py
-
-# AWS S3
-RUN pip install boto3 awscli &&\
-  yum -y install jq
-
-# R package dependencies
+# R package dependencies # BASE
 # PostgreSQL
 # Leaflet
 # RMarkdown
 RUN \
   echo "PostgreSQL" &&\
   yum -y install libxml2-devel postgresql-devel &&\
-echo "Leaflet" &&\
+  echo "Leaflet" &&\
   yum install -y gcc-c++.x86_64 cpp.x86_64 sqlite-devel.x86_64 libtiff.x86_64 &&\
   wget https://download.osgeo.org/geos/geos-3.9.1.tar.bz2 &&\
   tar -xvf geos-3.9.1.tar.bz2 &&\
@@ -109,6 +98,7 @@ echo "Leaflet" &&\
   ./configure --libdir=/usr/lib64 &&\
   sudo make &&\
   sudo make install &&\
+  cd .. && rm -rf geos-3.9.1* &&\
   wget https://download.osgeo.org/proj/proj-6.1.1.tar.gz &&\
   tar -xvf proj-6.1.1.tar.gz &&\
   cd proj-6.1.1 &&\
@@ -123,7 +113,7 @@ echo "Leaflet" &&\
   sudo make &&\
   sudo make install &&\
   cd .. && rm -rf gdal-* &&\
-echo "RMarkdown" &&\
+  echo "RMarkdown" &&\
   wget https://github.com/jgm/pandoc/releases/download/2.14.2/pandoc-2.14.2-linux-amd64.tar.gz &&\
   tar xvzf pandoc-2.14.2-linux-amd64.tar.gz --strip-components 1 -C /usr/local &&\
   rm -rf pandoc-2.14.2*
@@ -132,7 +122,7 @@ echo "RMarkdown" &&\
 # Install Software ========================================
 #==========================================================
 
-# SeqKit ========================================
+# SeqKit ======================================== BASE
 RUN wget https://github.com/shenwei356/seqkit/releases/download/v${SEQKITVERSION}/seqkit_linux_amd64.tar.gz &&\
   tar -xvf seqkit* && mv seqkit /usr/local/bin/ &&\
   rm seqkit_linux*
@@ -146,7 +136,7 @@ RUN wget https://github.com/shenwei356/seqkit/releases/download/v${SEQKITVERSION
 #   cd samtools-${SAMTOOLSVERSION} && make && make install &&\
 #   cd .. && rm -rf samtools-${SAMTOOLSVERSION}
 
-# MUSCLE ========================================
+# MUSCLE ======================================== BASE
 RUN wget http://drive5.com/muscle/downloads"$MUSCLEVERSION"/muscle"$MUSCLEVERSION"_i86linux64.tar.gz &&\
   tar -xvf muscle* &&\
   rm muscle*.tar.gz &&\
@@ -158,17 +148,56 @@ RUN wget http://drive5.com/muscle/downloads"$MUSCLEVERSION"/muscle"$MUSCLEVERSIO
 #   rm    diamond-linux64.tar.gz &&\
 #   mv    diamond /usr/local/bin/
 
-# Use serratus-built dev version
+# Use serratus-built dev version # BASE
 RUN wget --quiet https://serratus-public.s3.amazonaws.com/bin/diamond &&\
     chmod 755 diamond &&\
     mv    diamond /usr/local/bin/
 
-# PALMSCAN ======================================
+# PALMSCAN ====================================== BASE
 RUN wget -O /usr/local/bin/palmscan \
   https://github.com/ababaian/palmscan/releases/download/v${PALMSCANVERSION}/palmscan-v${PALMSCANVERSION} &&\
   chmod 755 /usr/local/bin/palmscan
 
-# PALMDB ========================================
+FROM amazonlinux:2023 AS palmid_base
+
+# Container Build Information
+ARG PROJECT='palmid'
+ARG TYPE='base'
+ARG VERSION='0.0.6'
+
+# Software Versions (pass to shell)
+ENV PALMIDVERSION=$VERSION
+
+ENV SEQKITVERSION='2.0.0'
+ENV DIAMONDVERSION='2.0.6-dev'
+ENV MUSCLEVERSION='3.8.31'
+ENV PALMSCANVERSION='1.0'
+ENV PALMDBVERSION='2021-03-14'
+ENV R='4'
+
+# Python3 # FINAL
+RUN yum -y install python3 python3-devel &&\
+  alias python=python3 &&\
+  curl -O https://bootstrap.pypa.io/get-pip.py &&\
+  python3 get-pip.py &&\
+  rm get-pip.py
+
+# AWS S3 # FINAL
+RUN pip install boto3 awscli &&\
+  yum -y install jq git tar wget gzip which sudo shadow-utils \
+                 util-linux byacc gcc make \
+                  unzip bzip2 bzip2-devel xz-devel zlib-devel \
+                  curl-devel openssl-devel \
+                  ncurses-devel
+
+COPY --from=palmid_builder ["/usr/local/bin/diamond", "/usr/local/bin/palmscan", \
+"/usr/local/bin/muscle", "/usr/local/bin/seqkit", "/usr/local/bin/"]
+
+COPY --from=palmid_builder ["/usr/local/bin/geo*", "/usr/local/bin/pandoc", \
+"/usr/local/bin/gdal*", "/usr/local/bin/proj*", "/usr/local/bin/"]
+
+
+# PALMDB ======================================== FINAL
 # clone repo + make sOTU-database
 RUN git clone https://github.com/rcedgar/palmdb.git &&\
   gzip -dr palmdb/* &&\
@@ -186,7 +215,7 @@ RUN yum -y install R
 # but is required for devtools
 RUN yum -y install harfbuzz-devel fribidi-devel \
   freetype-devel libpng-devel libtiff-devel \
-libjpeg-turbo-devel
+  libjpeg-turbo-devel
 
 RUN R -e 'install.packages( c("devtools"), repos = "http://cran.us.r-project.org")'
 RUN R -e 'install.packages( c("remotes"), repos = "http://cran.us.r-project.org")'
