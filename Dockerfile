@@ -70,20 +70,20 @@ LABEL tags="palmscan, diamond, muscle, R, palmid"
 # Dependencies ============================================
 #==========================================================
 # Update Core
-# RUN yum -y update # BASE
+# RUN yum -y update
 RUN yum -y install tar wget gzip which sudo shadow-utils \
            util-linux byacc git
 
-# For development # BASE
+# For development
 RUN yum -y install vim htop less
 
-# htslib/samtools # BASE + FINAL
+# htslib/samtools
 RUN yum -y install gcc make \
     unzip bzip2 bzip2-devel xz-devel zlib-devel \
     curl-devel openssl-devel \
     ncurses-devel
 
-# R package dependencies # BASE
+# R package dependencies
 # PostgreSQL
 # Leaflet
 # RMarkdown
@@ -122,7 +122,7 @@ RUN \
 # Install Software ========================================
 #==========================================================
 
-# SeqKit ======================================== BASE
+# SeqKit ========================================
 RUN wget https://github.com/shenwei356/seqkit/releases/download/v${SEQKITVERSION}/seqkit_linux_amd64.tar.gz &&\
   tar -xvf seqkit* && mv seqkit /usr/local/bin/ &&\
   rm seqkit_linux*
@@ -136,7 +136,7 @@ RUN wget https://github.com/shenwei356/seqkit/releases/download/v${SEQKITVERSION
 #   cd samtools-${SAMTOOLSVERSION} && make && make install &&\
 #   cd .. && rm -rf samtools-${SAMTOOLSVERSION}
 
-# MUSCLE ======================================== BASE
+# MUSCLE ========================================
 RUN wget http://drive5.com/muscle/downloads"$MUSCLEVERSION"/muscle"$MUSCLEVERSION"_i86linux64.tar.gz &&\
   tar -xvf muscle* &&\
   rm muscle*.tar.gz &&\
@@ -148,17 +148,20 @@ RUN wget http://drive5.com/muscle/downloads"$MUSCLEVERSION"/muscle"$MUSCLEVERSIO
 #   rm    diamond-linux64.tar.gz &&\
 #   mv    diamond /usr/local/bin/
 
-# Use serratus-built dev version # BASE
+# Use serratus-built dev version
 RUN wget --quiet https://serratus-public.s3.amazonaws.com/bin/diamond &&\
     chmod 755 diamond &&\
     mv    diamond /usr/local/bin/
 
-# PALMSCAN ====================================== BASE
+# PALMSCAN ======================================
 RUN wget -O /usr/local/bin/palmscan \
   https://github.com/ababaian/palmscan/releases/download/v${PALMSCANVERSION}/palmscan-v${PALMSCANVERSION} &&\
   chmod 755 /usr/local/bin/palmscan
 
 FROM amazonlinux:2023 AS palmid_base
+
+ENV BASEDIR=/home/palmid
+WORKDIR $BASEDIR
 
 # Container Build Information
 ARG PROJECT='palmid'
@@ -182,7 +185,7 @@ RUN yum -y install python3 python3-devel &&\
   python3 get-pip.py &&\
   rm get-pip.py
 
-# AWS S3 # FINAL
+# AWS S3
 RUN pip install boto3 awscli &&\
   yum -y install jq git tar wget gzip which sudo shadow-utils \
                  util-linux byacc gcc make \
@@ -197,7 +200,7 @@ COPY --from=palmid_builder ["/usr/local/bin/geo*", "/usr/local/bin/pandoc", \
 "/usr/local/bin/gdal*", "/usr/local/bin/proj*", "/usr/local/bin/"]
 
 
-# PALMDB ======================================== FINAL
+# PALMDB ========================================
 # clone repo + make sOTU-database
 RUN git clone https://github.com/rcedgar/palmdb.git &&\
   gzip -dr palmdb/* &&\
