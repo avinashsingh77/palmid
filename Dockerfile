@@ -83,6 +83,17 @@ RUN yum -y install gcc make \
     curl-devel openssl-devel \
     ncurses-devel
 
+# Python3
+RUN yum -y install python3 python3-devel &&\
+  alias python=python3 &&\
+  curl -O https://bootstrap.pypa.io/get-pip.py &&\
+  python3 get-pip.py &&\
+  rm get-pip.py
+
+# AWS S3
+RUN pip install boto3 awscli &&\
+  yum -y install jq
+
 # R package dependencies
 # PostgreSQL
 # Leaflet
@@ -90,7 +101,7 @@ RUN yum -y install gcc make \
 RUN \
   echo "PostgreSQL" &&\
   yum -y install libxml2-devel postgresql-devel &&\
-  echo "Leaflet" &&\
+echo "Leaflet" &&\
   yum install -y gcc-c++.x86_64 cpp.x86_64 sqlite-devel.x86_64 libtiff.x86_64 &&\
   wget https://download.osgeo.org/geos/geos-3.9.1.tar.bz2 &&\
   tar -xvf geos-3.9.1.tar.bz2 &&\
@@ -98,7 +109,6 @@ RUN \
   ./configure --libdir=/usr/lib64 &&\
   sudo make &&\
   sudo make install &&\
-  cd .. && rm -rf geos-3.9.1* &&\
   wget https://download.osgeo.org/proj/proj-6.1.1.tar.gz &&\
   tar -xvf proj-6.1.1.tar.gz &&\
   cd proj-6.1.1 &&\
@@ -113,7 +123,7 @@ RUN \
   sudo make &&\
   sudo make install &&\
   cd .. && rm -rf gdal-* &&\
-  echo "RMarkdown" &&\
+echo "RMarkdown" &&\
   wget https://github.com/jgm/pandoc/releases/download/2.14.2/pandoc-2.14.2-linux-amd64.tar.gz &&\
   tar xvzf pandoc-2.14.2-linux-amd64.tar.gz --strip-components 1 -C /usr/local &&\
   rm -rf pandoc-2.14.2*
@@ -158,7 +168,41 @@ RUN wget -O /usr/local/bin/palmscan \
   https://github.com/ababaian/palmscan/releases/download/v${PALMSCANVERSION}/palmscan-v${PALMSCANVERSION} &&\
   chmod 755 /usr/local/bin/palmscan
 
-FROM amazonlinux:2023 AS palmid_base
+# PALMDB ========================================
+# clone repo + make sOTU-database
+RUN git clone https://github.com/rcedgar/palmdb.git &&\
+  gzip -dr palmdb/* &&\
+  cp "palmdb/"$PALMDBVERSION"/otu_centroids.fa" palmdb/palmdb.fa &&\
+  diamond makedb --in palmdb/palmdb.fa -d palmdb/palmdb
+  # db hash: 0c43dc6647b7ba99b4035bc1b1abf746
+
+# R 4.0 =========================================
+# Install R
+# Note: 1 GB install
+RUN yum -y install R
+
+# R Packages ====================================
+# libpng package here must be installed after R
+# but is required for devtools
+RUN yum -y install harfbuzz-devel fribidi-devel \
+  freetype-devel libpng-devel libtiff-devel \
+libjpeg-turbo-devel
+
+RUN R -e 'install.packages( c("devtools"), repos = "http://cran.us.r-project.org")'
+RUN R -e 'install.packages( c("remotes"), repos = "http://cran.us.r-project.org")'
+#RUN R -e 'if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager", repos = "http://cran.us.r-project.org"); BiocManager::install("treeio")' # needs to be installed prior to ggtree
+#RUN R -e 'remotes::install_version("ape", 5.6, repos = "http://cran.us.r-project.org")'
+#RUN R -e 'devtools::install_github("YuLab-SMU/ggtree", dependencies=FALSE)'
+#RUN R -e 'BiocManager::install("Biostrings")'
+#RUN R -e 'BiocManager::install("R4RNA")'
+#RUN R -e 'remotes::install_version("ggmsa", version="1.0.2", repos = "http://cran.us.r-project.org")'
+RUN R -e 'devtools::install_github("ababaian/palmid")'
+
+#==========================================================
+# palmid Initialize =======================================
+#==========================================================
+
+FROM amazonlinux:2023 AS pamlid_base
 
 ENV BASEDIR=/home/palmid
 WORKDIR $BASEDIR
@@ -178,61 +222,27 @@ ENV PALMSCANVERSION='1.0'
 ENV PALMDBVERSION='2021-03-14'
 ENV R='4'
 
-# Python3 # FINAL
-RUN yum -y install python3 python3-devel &&\
-  alias python=python3 &&\
-  curl -O https://bootstrap.pypa.io/get-pip.py &&\
-  python3 get-pip.py &&\
-  rm get-pip.py
+# Additional Metadata
+LABEL author="ababaian"
+LABEL container.base.image="amazonlinux:2"
+LABEL project.name=${PROJECT}
+LABEL project.website="https://github.com/ababaian/palmid"
+LABEL container.type=${TYPE}
+LABEL container.version=${VERSION}
+LABEL container.description="palmid-base image"
+LABEL software.license="GPLv3"
+LABEL tags="palmscan, diamond, muscle, R, palmid"
 
-# AWS S3
-RUN pip install boto3 awscli &&\
-  yum -y install jq git tar wget gzip which sudo shadow-utils \
-                 util-linux byacc gcc make \
-                  unzip bzip2 bzip2-devel xz-devel zlib-devel \
-                  curl-devel openssl-devel \
-                  ncurses-devel
+COPY --from=palmid_builder ["/usr/local/bin/", "/usr/local/bin/"]
 
-COPY --from=palmid_builder ["/usr/local/bin/diamond", "/usr/local/bin/palmscan", \
-"/usr/local/bin/muscle", "/usr/local/bin/seqkit", "/usr/local/bin/"]
+COPY --from=palmid_builder ["/usr/lib64", "/usr/lib64/"]
 
-COPY --from=palmid_builder ["/usr/local/bin/geo*", "/usr/local/bin/pandoc", \
-"/usr/local/bin/gdal*", "/usr/local/bin/proj*", "/usr/local/bin/"]
+COPY --from=palmid_builder ["/usr/bin/", "/usr/bin/" ]
 
+COPY --from=palmid_builder ["/usr/lib64/R/", "/usr/lib64/R/" ]
 
-# PALMDB ========================================
-# clone repo + make sOTU-database
-RUN git clone https://github.com/rcedgar/palmdb.git &&\
-  gzip -dr palmdb/* &&\
-  cp "palmdb/"$PALMDBVERSION"/otu_centroids.fa" palmdb/palmdb.fa &&\
-  diamond makedb --in palmdb/palmdb.fa -d palmdb/palmdb
-  # db hash: 0c43dc6647b7ba99b4035bc1b1abf746
+COPY --from=palmid_builder ["/home/palmid", "/home/palmid"]
 
-# R 4.0 =========================================
-# Install R
-# Note: 1 GB install
-RUN yum -y install R
-
-# R Packages ====================================
-# libpng package here must be installed after R
-# but is required for devtools
-RUN yum -y install harfbuzz-devel fribidi-devel \
-  freetype-devel libpng-devel libtiff-devel \
-  libjpeg-turbo-devel
-
-RUN R -e 'install.packages( c("devtools"), repos = "http://cran.us.r-project.org")'
-RUN R -e 'install.packages( c("remotes"), repos = "http://cran.us.r-project.org")'
-#RUN R -e 'if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager", repos = "http://cran.us.r-project.org"); BiocManager::install("treeio")' # needs to be installed prior to ggtree
-#RUN R -e 'remotes::install_version("ape", 5.6, repos = "http://cran.us.r-project.org")'
-#RUN R -e 'devtools::install_github("YuLab-SMU/ggtree", dependencies=FALSE)'
-#RUN R -e 'BiocManager::install("Biostrings")'
-#RUN R -e 'BiocManager::install("R4RNA")'
-#RUN R -e 'remotes::install_version("ggmsa", version="1.0.2", repos = "http://cran.us.r-project.org")'
-RUN R -e 'devtools::install_github("ababaian/palmid")'
-
-#==========================================================
-# palmid Initialize =======================================
-#==========================================================
 # scripts + test data
 COPY palmid.Rmd scripts/* ./
 COPY data/* inst/extdata/* img/* data/
